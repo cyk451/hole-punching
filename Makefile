@@ -1,7 +1,7 @@
-all: client server
+all: ./bin/client ./bin/server
 
-client: src/client/main.go
-	go build -o client ./src/client
+./bin/client: src/client/main.go
+	go build -o ./bin/client ./src/client
 
-server: src/server/main.go
-	go build -o server ./src/server
+./bin/server: src/server/main.go
+	go build -o ./bin/server ./src/server

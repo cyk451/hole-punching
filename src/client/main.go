@@ -7,7 +7,7 @@ import (
 	"net"
 	"time"
 
-	netutils "github.com/cyk451/ttt-server/src/net-utils"
+	netutils "github.com/cyk451/hole-punching/src/net-utils"
 )
 
 const CLIENT_PORT = "11711"

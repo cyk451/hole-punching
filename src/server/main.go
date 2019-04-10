@@ -7,7 +7,7 @@ import (
 	"net"
 	"strings"
 
-	netutils "github.com/cyk451/ttt-server/src/net-utils"
+	netutils "github.com/cyk451/hole-punching/src/net-utils"
 )
 
 type Peer struct {
