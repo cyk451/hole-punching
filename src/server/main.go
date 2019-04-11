@@ -4,6 +4,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strings"
 
@@ -12,22 +13,28 @@ import (
 
 type Peer struct {
 	netutils.Client
+	Writer *ClientWriter
 }
 
+/* TODO adding lock to this */
+/* use store interfaces */
+
+/* keys are public ips, which should be unique */
 var peerTable = map[string]Peer{}
 
 type ClientWriter struct {
 	conn    *net.UDPConn
-	addr    *net.Addr
+	addr    net.UDPAddr
 	encoder *gob.Encoder
 }
 
 var _ io.Writer = &ClientWriter{}
 
 func (c ClientWriter) Write(in []byte) (w int, err error) {
+	log.Println("Writing: ", string(in))
 	for w < len(in) {
 		t := 0
-		t, err = c.conn.WriteTo(in, *c.addr)
+		t, err = c.conn.WriteToUDP(in, &c.addr)
 		w += t
 		if err != nil {
 			return
@@ -40,23 +47,25 @@ func (c ClientWriter) WriteSerialized(obj interface{}) error {
 	return c.encoder.Encode(obj)
 }
 
-func NewClientWriter(conn *net.UDPConn, addr *net.Addr) *ClientWriter {
+func NewClientWriter(conn *net.UDPConn, addr *net.UDPAddr) *ClientWriter {
 	c := &ClientWriter{}
 	c.conn = conn
-	c.addr = addr
+	c.addr = *addr
 	c.encoder = gob.NewEncoder(c)
 	return c
 }
 
 func handleList(public string, conn *ClientWriter) {
-	if !hasPeer(public) {
-		fmt.Println("Register your private ip first")
-		return
-	}
+	/*
+		if !hasPeer(public) {
+			fmt.Println("Register your private ip first")
+			return
+		}
 
-	conn.WriteSerialized(netutils.Header{
-		Num: len(peerTable) - 1,
-	})
+			conn.WriteSerialized(netutils.Header{
+				Num: len(peerTable) - 1,
+			})
+	*/
 
 	for i := range peerTable {
 		if i == public {
@@ -78,10 +87,27 @@ func hasPeer(public string) bool {
 	return ok
 }
 
+func notifyNewPeer(peer Peer) error {
+	for i := range peerTable {
+		if i == peer.Public {
+			// don't tell your self
+			continue
+		}
+		// will this call even timeout??
+		log.Println("Notifying ", peerTable[i].Public, " ", peer.Public)
+		err := peerTable[i].Writer.WriteSerialized(peer)
+		if err != nil {
+			// unlikely to rollback...
+			return err
+		}
+	}
+	return nil
+}
+
 func handleRegisteration(public string, private string, conn *ClientWriter) {
 
 	if hasPeer(public) {
-		fmt.Println("This public ip already registered. Do nothing.")
+		fmt.Println("This public ip is already registered. Do nothing.")
 		return
 	}
 
@@ -94,22 +120,32 @@ func handleRegisteration(public string, private string, conn *ClientWriter) {
 	fmt.Println("Adding ", public, " to peer list")
 
 	newClient := netutils.Client{
-		Public:  public,                  // net.ParseIP(ipNPort[0]),
-		Private: private + ":" + temp[1], //  net.ParseIP(private),
+		Public:  public,
+		Private: private,
 		Id:      uint(len(peerTable)),
 	}
 
 	// responding peer his own information
 	// err := netutils.WriteClient(conn, newClient)
-	err := conn.WriteSerialized(newClient)
-	if err != nil {
-		fmt.Println("Writeclient: ", err)
-		return
+	/*
+		err := conn.WriteSerialized(newClient)
+		if err != nil {
+			fmt.Println("Writeclient: ", err)
+			return
+		}
+	*/
+
+	peer := Peer{
+		Client: newClient,
+		Writer: conn,
 	}
 
-	peerTable[public] = Peer{
-		Client: newClient,
-	}
+	// adding semephore
+	handleList(public, conn)
+
+	notifyNewPeer(peer)
+
+	peerTable[public] = peer
 
 	fmt.Println("We now have ", len(peerTable), " clients")
 }
@@ -128,7 +164,7 @@ func main() {
 
 	for {
 		what := make([]byte, 300)
-		c, public, err := udp.ReadFrom(what)
+		c, public, err := udp.ReadFromUDP(what)
 		if err != nil {
 			if c == 0 {
 				fmt.Println("udp accept error len ", c)
@@ -136,12 +172,15 @@ func main() {
 			fmt.Println("udp error ", err)
 			continue
 		}
-		cmds := strings.Split(string(what), " ")
 
-		client := NewClientWriter(udp, &public)
-		fmt.Println("msg ", cmds)
+		client := NewClientWriter(udp, public)
+
+		cmds := strings.Split(string(what[:c]), " ")
+		log.Println("msg ", cmds)
+
 		switch cmds[0] {
 		case "register":
+
 			// register <private ip address>
 			// register itself to be a p2p client, respond a client struct
 			// which is registered client
@@ -154,11 +193,11 @@ func main() {
 				cmds[1], // private ip
 				client,
 			)
-		case "list":
-			go handleList(public.String(), client)
+			// case "list":
+			// go handleList(public.String(), client)
 		default:
-			fmt.Println("Unknown command: ", cmds[0])
+			log.Println("Unknown command from ", public.String(), ": ", cmds[0])
 		}
 	}
-	fmt.Println("reach end of execution")
+	// log.Println("reach end of execution")
 }

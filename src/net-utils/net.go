@@ -3,7 +3,12 @@ package netutils
 import (
 	"encoding/gob"
 	"io"
+	"log"
+
+	jsoniter "github.com/json-iterator/go"
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 type Message struct {
 	who Client
@@ -39,4 +44,16 @@ func ReadClient(conn io.Reader, c *Client) error {
 	}
 
 	return nil
+}
+
+func (c Client) MarshalBinary() (data []byte, err error) {
+	data, err = json.Marshal(&c)
+	log.Println("Marshalled: ", string(data))
+	return
+}
+
+func (c *Client) UnmarshalBinary(data []byte) (err error) {
+	log.Println("Unmarshalling: ", string(data))
+	err = json.Unmarshal(data, &c)
+	return
 }
