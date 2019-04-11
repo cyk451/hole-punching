@@ -1,7 +1,13 @@
-all: ./bin/client ./bin/server
+OUT := ./bin
+SRC := ./src
+BINARIES := $(addprefix $(OUT)/, client server)
 
-./bin/client: src/client/main.go
-	go build -o ./bin/client ./src/client
+all: $(BINARIES)
 
-./bin/server: src/server/main.go
-	go build -o ./bin/server ./src/server
+$(BINARIES): | $(OUT)
+
+$(OUT):
+	-mkdir $(OUT)
+
+$(OUT)/%: $(SRC)/%/*.go
+	CGO_ENABLED=0 go build -o $@ $(SRC)/$(notdir $@)
