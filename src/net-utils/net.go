@@ -21,10 +21,6 @@ type Client struct {
 	Id      uint
 }
 
-type Header struct {
-	Num int
-}
-
 func WriteClient(conn io.Writer, c Client) error {
 	encoder := gob.NewEncoder(conn)
 

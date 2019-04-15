@@ -56,29 +56,16 @@ func NewClientWriter(conn *net.UDPConn, addr *net.UDPAddr) *ClientWriter {
 }
 
 func handleList(public string, conn *ClientWriter) {
-	/*
-		if !hasPeer(public) {
-			fmt.Println("Register your private ip first")
-			return
-		}
-
-			conn.WriteSerialized(netutils.Header{
-				Num: len(peerTable) - 1,
-			})
-	*/
-
 	for i := range peerTable {
 		if i == public {
 			continue
 		}
-		fmt.Printf("sending %+v\n", peerTable[i].Client)
+		log.Printf("sending %+v\n", peerTable[i].Client)
 		err := conn.WriteSerialized(peerTable[i].Client)
-		// fmt.Println("End sending")
 		if err != nil {
-			fmt.Println("Writeclient: ", err)
+			log.Println("Writeclient: ", err)
 			return
 		}
-		// fmt.Println("peer ", i, " Wrote")
 	}
 }
 
@@ -107,33 +94,23 @@ func notifyNewPeer(peer Peer) error {
 func handleRegisteration(public string, private string, conn *ClientWriter) {
 
 	if hasPeer(public) {
-		fmt.Println("This public ip is already registered. Do nothing.")
+		log.Println("This public ip is already registered. Do nothing.")
 		return
 	}
 
 	temp := strings.Split(public, ":")
 	if len(temp) != 2 {
-		fmt.Println("public ip not having a port?")
+		log.Println("public ip not having a port?")
 		return
 	}
 
-	fmt.Println("Adding ", public, " to peer list")
+	log.Println("Adding ", public, " to peer list")
 
 	newClient := netutils.Client{
 		Public:  public,
 		Private: private,
 		Id:      uint(len(peerTable)),
 	}
-
-	// responding peer his own information
-	// err := netutils.WriteClient(conn, newClient)
-	/*
-		err := conn.WriteSerialized(newClient)
-		if err != nil {
-			fmt.Println("Writeclient: ", err)
-			return
-		}
-	*/
 
 	peer := Peer{
 		Client: newClient,
@@ -147,7 +124,7 @@ func handleRegisteration(public string, private string, conn *ClientWriter) {
 
 	peerTable[public] = peer
 
-	fmt.Println("We now have ", len(peerTable), " clients")
+	log.Println("We now have ", len(peerTable), " clients")
 }
 
 func main() {
@@ -158,18 +135,18 @@ func main() {
 	}
 	udp, err := net.ListenUDP("udp", &addr)
 	if err != nil {
-		fmt.Println("error listening: ", err)
+		log.Println("error listening: ", err)
 		return
 	}
 
 	for {
-		what := make([]byte, 300)
+		what := make([]byte, 512)
 		c, public, err := udp.ReadFromUDP(what)
 		if err != nil {
 			if c == 0 {
-				fmt.Println("udp accept error len ", c)
+				log.Println("udp accept error len ", c)
 			}
-			fmt.Println("udp error ", err)
+			log.Println("udp error ", err)
 			continue
 		}
 
@@ -185,7 +162,7 @@ func main() {
 			// register itself to be a p2p client, respond a client struct
 			// which is registered client
 			if len(cmds) < 2 {
-				fmt.Println("command register require peer private ip address...")
+				log.Println("command register require peer private ip address...")
 				continue
 			}
 			go handleRegisteration(
@@ -193,11 +170,8 @@ func main() {
 				cmds[1], // private ip
 				client,
 			)
-			// case "list":
-			// go handleList(public.String(), client)
 		default:
 			log.Println("Unknown command from ", public.String(), ": ", cmds[0])
 		}
 	}
-	// log.Println("reach end of execution")
 }

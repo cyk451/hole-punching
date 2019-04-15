@@ -1,79 +1,51 @@
 package main
 
 import (
-	"encoding/gob"
+	"bufio"
+	"fmt"
+	"io"
 	"log"
 	"net"
-	"time"
+	"os"
 
 	netutils "github.com/cyk451/hole-punching/src/net-utils"
 )
 
-const CLIENT_PORT = "11711"
-const HOST = "10.128.113.10:" + CLIENT_PORT
+const HOST_PORT = "11711"
+const HOST = "10.128.113.10:" + HOST_PORT
+const CURSOR = "$ "
 
-// var peerUdps = []net.Conn{}
+func chatShellHandler(p2p *P2PClient) {
+	// var err error
 
-// var peerChannel chan []byte
-var peerList []netutils.Client
+	reader := bufio.NewReader(os.Stdin)
 
-//func shellHandler(udp) {
-//	for {
-//		fmt.Print("$ ")
-//		cmdString, err := reader.ReadString('\n')
-//		if err != nil {
-//			fmt.Fprintln(os.Stderr, err)
-//		}
-//		// cmdString = strings.TrimSuffix(cmdString, "\n")
-//
-//		sendMessage(cmdString)
-//		/*
-//			cmd := exec.Command(cmdString)
-//			cmd.Stderr = os.Stderr
-//			cmd.Stdout = os.Stdout
-//			err = cmd.Run()
-//			if err != nil {
-//				fmt.Fprintln(os.Stderr, err)
-//			}
-//		*/
-//	}
-//
-//}
-//
-//func sendMessage(msg string) {
-//
-//}
-//
-
-type Message struct {
-	from    *net.UDPAddr
-	content []byte
-}
-
-type HostIO struct {
-	conn *net.UDPConn
-	// buf     bytes.Buffer
-	decoder *gob.Decoder
-	// signal  chan int
-	// size    int
-	// io.Pipe
-	// buf io.Reader
-}
-type PeerIO struct {
-	conn *net.UDPConn
-	// bytes.Buffer
-	// decoder *gob.Decoder
-}
-
-func (s HostIO) ReadSerialized(obj interface{}) (err error) {
-	for retries := 10; retries > 0; retries-- {
-		err = s.decoder.Decode(obj)
-		// somehow we need to do a couple retries
-		if err == nil {
-			return
+	for {
+		fmt.Print(CURSOR)
+		what, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				fmt.Println("bye")
+				return
+			}
+			fmt.Fprintln(os.Stderr, err)
+			continue
 		}
+		go p2p.WriteToPeers([]byte(what))
 	}
-	return
+}
+
+type PeerIO struct {
+	udp            *net.UDPAddr
+	conn           *P2PClient
+	index          int
+	readPipeWriter io.Writer
+	// reuse Read()
+	io.Reader
+}
+
+func (s *PeerIO) writeToReadPipe(bytes []byte) (int, error) {
+	return s.readPipeWriter.Write(bytes)
 }
 
 // actually read from master
@@ -107,25 +79,23 @@ func (hs HostIO) Handle(msg []byte) error {
 }
 */
 
-func (s PeerIO) Read(p []byte) (int, error) {
-	return 0, nil
-}
-
-func (s PeerIO) Write(p []byte) (int, error) {
-	for i := range peerList {
-		la, err := net.ResolveUDPAddr("udp", peerList[i].Public)
+func (s *PeerIO) Write(p []byte) (c int, err error) {
+	// TODO: try private and public
+	if s.udp == nil {
+		public := s.conn.peerList[s.index].Public
+		s.udp, err = net.ResolveUDPAddr("udp", public)
 		if err != nil {
 			log.Println("udp resolving error ", err)
 		}
-
-		_, err = s.conn.WriteToUDP(p, la)
-		if err != nil {
-			log.Println("Error writing to peer ", peerList[i].Public, ", ", err)
-			return 0, err
-		}
-		log.Println("bytes wrote to ", peerList[i].Public)
 	}
-	return len(p), nil
+
+	c, err = s.conn.conn.WriteToUDP(p, s.udp)
+	if err != nil {
+		log.Println("Error writing to peer ", s.udp, ", ", err)
+		return
+	}
+	log.Println("bytes wrote to ", s.udp)
+	return
 }
 
 func dialToPeers() *PeerIO {
@@ -142,86 +112,52 @@ func establishPeerConnection(conn *netutils.Client) {
 //}
 //
 
-func dialToServer(initReady chan *P2PClient) {
-	p2p := newP2PConnection(HOST)
-
-	// send a registeration information to host
-
-	host, err := p2p.ConnectHost()
-	if err != nil {
-		log.Fatal("Error ", err)
-		return
-	}
-
-	/*
-		err = p2p.ReadSerialized(&self)
+func peerReadHandler(peer *PeerIO) {
+	for {
+		msg := make([]byte, 512)
+		l, err := peer.Read(msg)
 		if err != nil {
-			fmt.Println("reading client ", err)
-			return
-		}
-		fmt.Printf("got assigned id %d\n", self.Id)
-	*/
-
-	/*
-			n, err = p2p.WriteHost([]byte("list "))
-			if err != nil {
-				fmt.Println(err, ", n: ", n)
-				return // err
+			if err == io.EOF {
+				continue
 			}
-
-		var hdr netutils.Header
-		err = p2p.ReadSerialized(&hdr)
-		if err != nil {
-			fmt.Println("reading client ", err)
-			return
+			log.Println("reading client: ", err)
+			break
 		}
+		fmt.Print("\r" + string(msg[:l]) + CURSOR)
+	}
+	log.Println("Read thread for peer", peer.index, " died")
+}
 
-		fmt.Println("got ", hdr.Num, " peers")
-
-		peerList = make([]netutils.Client, 0, hdr.Num)
-
-		for i := 0; i < hdr.Num; i++ {
-			var c netutils.Client
-			err = p2p.ReadSerialized(&c)
-			peerList = append(peerList, c)
-			fmt.Printf("I got client %+v\n", c)
-		}
-	*/
-
-	initReady <- p2p
-
-	go p2p.Listen()
-
+func listen(p2p *P2PClient, host *HostIO) {
 	for {
 		var c netutils.Client
 		err := host.ReadSerialized(&c)
 		if err != nil {
-			// log.Println("ReadSerialized error: ", err)
+			log.Println("ReadSerialized error: ", err)
 			continue
 		}
 
 		log.Printf("Adding peer %+v\n", c)
-		peerList = append(peerList, c)
+		peer := p2p.AddPeer(&c)
+		go peerReadHandler(peer)
 	}
 }
 
 func main() {
+	p2p := newP2PClient(HOST)
 
-	var p2p *P2PClient
-	initReady := make(chan *P2PClient)
-	go dialToServer(initReady)
-	p2p = <-initReady
-
-	log.Println("Client on ", p2p.localIP)
-
-	tick := time.Tick(5000 * time.Millisecond)
-	for {
-		select {
-		case <-tick:
-			p2p.peerIo.Write([]byte("Hello peers"))
-		}
+	// send a registeration information to host
+	host, err := p2p.ConnectHost()
+	if err != nil {
+		log.Fatal("Error dial p2p ", err)
+		return
 	}
 
-	// go dialToPeers()
-	shellHandler(p2p)
+	go p2p.Listen()
+
+	go listen(p2p, host)
+
+	fmt.Println("* Client runing on ", p2p.localIP)
+
+	chatShellHandler(p2p)
 }
