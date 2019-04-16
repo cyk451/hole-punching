@@ -12,7 +12,10 @@ import (
 )
 
 const HOST_PORT = "11711"
-const HOST = "10.128.113.10:" + HOST_PORT
+
+// const HOST = "10.128.113.10:" + HOST_PORT
+
+const HOST = "104.155.225.82:" + HOST_PORT
 const CURSOR = "$ "
 
 func chatShellHandler(p2p *P2PClient) {
@@ -36,12 +39,13 @@ func chatShellHandler(p2p *P2PClient) {
 }
 
 type PeerIO struct {
-	udp            *net.UDPAddr
-	conn           *P2PClient
-	index          int
-	readPipeWriter io.Writer
-	// reuse Read()
+	client *netutils.Client
+	conn   *LockedUDPConn
 	io.Reader
+	readPipeWriter io.Writer
+	udp            *net.UDPAddr
+	// reuse Read()
+	// conn           *P2PClient
 }
 
 func (s *PeerIO) writeToReadPipe(bytes []byte) (int, error) {
@@ -82,35 +86,24 @@ func (hs HostIO) Handle(msg []byte) error {
 func (s *PeerIO) Write(p []byte) (c int, err error) {
 	// TODO: try private and public
 	if s.udp == nil {
-		public := s.conn.peerList[s.index].Public
+		public := s.client.Public
 		s.udp, err = net.ResolveUDPAddr("udp", public)
 		if err != nil {
 			log.Println("udp resolving error ", err)
 		}
 	}
 
-	c, err = s.conn.conn.WriteToUDP(p, s.udp)
+	s.conn.mutex.Lock()
+	c, err = s.conn.WriteToUDP(p, s.udp)
+	s.conn.mutex.Unlock()
+
 	if err != nil {
 		log.Println("Error writing to peer ", s.udp, ", ", err)
 		return
 	}
-	log.Println("bytes wrote to ", s.udp)
+	log.Println(c, " bytes wrote to ", s.udp)
 	return
 }
-
-func dialToPeers() *PeerIO {
-	return nil
-}
-
-//
-func establishPeerConnection(conn *netutils.Client) {
-}
-
-//
-//func isNewPeer() bool {
-//	return true
-//}
-//
 
 func peerReadHandler(peer *PeerIO) {
 	for {
@@ -125,7 +118,7 @@ func peerReadHandler(peer *PeerIO) {
 		}
 		fmt.Print("\r" + string(msg[:l]) + CURSOR)
 	}
-	log.Println("Read thread for peer", peer.index, " died")
+	log.Println("Read thread for peer", peer.client.Public, " died")
 }
 
 func listen(p2p *P2PClient, host *HostIO) {
@@ -141,6 +134,13 @@ func listen(p2p *P2PClient, host *HostIO) {
 		peer := p2p.AddPeer(&c)
 		go peerReadHandler(peer)
 	}
+}
+
+func signalExit(host *HostIO) {
+	log.Println("Close")
+
+	host.Write([]byte("close"))
+
 }
 
 func main() {
@@ -160,4 +160,6 @@ func main() {
 	fmt.Println("* Client runing on ", p2p.localIP)
 
 	chatShellHandler(p2p)
+
+	signalExit(host)
 }

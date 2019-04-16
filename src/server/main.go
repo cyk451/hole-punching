@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/gob"
 	"fmt"
 	"io"
@@ -12,7 +13,7 @@ import (
 )
 
 type Peer struct {
-	netutils.Client
+	*netutils.Client
 	Writer *ClientWriter
 }
 
@@ -23,27 +24,31 @@ type Peer struct {
 var peerTable = map[string]Peer{}
 
 type ClientWriter struct {
-	conn    *net.UDPConn
 	addr    net.UDPAddr
+	conn    *net.UDPConn
 	encoder *gob.Encoder
+	buffer  bytes.Buffer
 }
 
 var _ io.Writer = &ClientWriter{}
 
-func (c ClientWriter) Write(in []byte) (w int, err error) {
+func (c *ClientWriter) Write(in []byte) (w int, err error) {
 	log.Println("Writing: ", string(in))
-	for w < len(in) {
-		t := 0
-		t, err = c.conn.WriteToUDP(in, &c.addr)
-		w += t
-		if err != nil {
-			return
-		}
+	// c.buffer = append(c.buffer, in...)
+	return c.buffer.Write(in)
+}
+
+func (c *ClientWriter) Flush() {
+	_, err := c.conn.WriteToUDP(c.buffer.Bytes(), &c.addr)
+	if err != nil {
+		log.Println("Write udp error: ", err)
 	}
+	c.buffer.Reset()
 	return
 }
 
-func (c ClientWriter) WriteSerialized(obj interface{}) error {
+func (c *ClientWriter) WriteSerialized(obj interface{}) error {
+	defer c.Flush()
 	return c.encoder.Encode(obj)
 }
 
@@ -61,7 +66,7 @@ func handleList(public string, conn *ClientWriter) {
 			continue
 		}
 		log.Printf("sending %+v\n", peerTable[i].Client)
-		err := conn.WriteSerialized(peerTable[i].Client)
+		err := conn.WriteSerialized(*peerTable[i].Client)
 		if err != nil {
 			log.Println("Writeclient: ", err)
 			return
@@ -74,7 +79,7 @@ func hasPeer(public string) bool {
 	return ok
 }
 
-func notifyNewPeer(peer Peer) error {
+func notifyNewPeer(peer *Peer) error {
 	for i := range peerTable {
 		if i == peer.Public {
 			// don't tell your self
@@ -82,7 +87,7 @@ func notifyNewPeer(peer Peer) error {
 		}
 		// will this call even timeout??
 		log.Println("Notifying ", peerTable[i].Public, " ", peer.Public)
-		err := peerTable[i].Writer.WriteSerialized(peer)
+		err := peerTable[i].Writer.WriteSerialized(*peer.Client)
 		if err != nil {
 			// unlikely to rollback...
 			return err
@@ -106,25 +111,29 @@ func handleRegisteration(public string, private string, conn *ClientWriter) {
 
 	log.Println("Adding ", public, " to peer list")
 
-	newClient := netutils.Client{
-		Public:  public,
-		Private: private,
-		Id:      uint(len(peerTable)),
-	}
+	count := uint(len(peerTable))
 
 	peer := Peer{
-		Client: newClient,
+		Client: &netutils.Client{
+			Public:  public,
+			Private: private,
+			Id:      count,
+		},
 		Writer: conn,
 	}
 
 	// adding semephore
 	handleList(public, conn)
 
-	notifyNewPeer(peer)
+	notifyNewPeer(&peer)
 
 	peerTable[public] = peer
 
-	log.Println("We now have ", len(peerTable), " clients")
+	log.Println("We now have ", count+1, " clients")
+}
+
+func handleExit(public string) {
+	delete(peerTable, public)
 }
 
 func main() {
@@ -169,6 +178,10 @@ func main() {
 				public.String(),
 				cmds[1], // private ip
 				client,
+			)
+		case "close":
+			go handleExit(
+				public.String(),
 			)
 		default:
 			log.Println("Unknown command from ", public.String(), ": ", cmds[0])

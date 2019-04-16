@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 
 	netutils "github.com/cyk451/hole-punching/src/net-utils"
 )
@@ -22,16 +23,25 @@ type p2pIO interface {
 	writeToReadPipe([]byte) (int, error)
 }
 
+type LockedUDPConn struct {
+	*net.UDPConn
+	mutex sync.Mutex
+}
+
 type HostIO struct {
-	conn           *net.UDPConn
+	conn           *LockedUDPConn
 	udp            *net.UDPAddr
 	decoder        *gob.Decoder
 	readPipeWriter io.Writer
 	io.Reader
+	// udp            *net.UDPAddr
 }
 
-func (s *HostIO) Write(bytes []byte) (int, error) {
-	return s.conn.WriteToUDP(bytes, s.udp)
+func (s *HostIO) Write(bytes []byte) (i int, e error) {
+	s.conn.mutex.Lock()
+	i, e = s.conn.WriteToUDP(bytes, s.udp)
+	s.conn.mutex.Unlock()
+	return i, e
 }
 
 func (s *HostIO) writeToReadPipe(bytes []byte) (int, error) {
@@ -50,7 +60,7 @@ func (s *HostIO) ReadSerialized(obj interface{}) (err error) {
 }
 
 type P2PClient struct {
-	conn         *net.UDPConn
+	conn         *LockedUDPConn
 	hostUDP      *net.UDPAddr
 	localIP      string
 	peerList     []netutils.Client
@@ -108,26 +118,14 @@ func newP2PClient(host string) *P2PClient {
 
 	c := &P2PClient{}
 	c.hostUDP = hostUDP
-	c.conn = conn
+	c.conn = &LockedUDPConn{UDPConn: conn}
 	c.localIP = localIP
 	c.ios = make(map[string]p2pIO)
 
 	return c
 }
 
-func (s *P2PClient) WriteHost(p []byte) (l int, e error) {
-	return s.conn.WriteToUDP(p, s.hostUDP)
-}
-
 func (s *P2PClient) ConnectHost() (*HostIO, error) {
-
-	what := "register " + s.localIP
-	n, err := s.WriteHost([]byte(what))
-	if err != nil {
-		fmt.Println(err, ", n: ", n)
-		return nil, err
-	}
-
 	r, w := io.Pipe()
 
 	host := &HostIO{
@@ -135,8 +133,16 @@ func (s *P2PClient) ConnectHost() (*HostIO, error) {
 		Reader:         r,
 		readPipeWriter: w,
 		udp:            s.hostUDP,
+		conn:           s.conn,
 	}
 	s.ios[s.hostUDP.String()] = host
+
+	what := "register " + s.localIP
+	n, err := host.Write([]byte(what))
+	if err != nil {
+		fmt.Println(err, ", n: ", n)
+		return nil, err
+	}
 
 	return host, nil
 }
@@ -171,15 +177,15 @@ func (s *P2PClient) Listen() {
 
 func (s *P2PClient) AddPeer(c *netutils.Client) *PeerIO {
 	// TODO lock peerList
-	i := len(s.peerList)
+	// i := len(s.peerList)
 	s.peerList = append(s.peerList, *c)
 	r, w := io.Pipe()
 
 	peer := &PeerIO{
-		conn:           s,
+		client:         c,
+		conn:           s.conn,
 		Reader:         r,
 		readPipeWriter: w,
-		index:          i,
 	}
 	s.ios[c.Public] = peer
 	log.Println("Peer added ", c.Public)
