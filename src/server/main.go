@@ -17,11 +17,10 @@ type Peer struct {
 	Writer *ClientWriter
 }
 
-/* TODO adding lock to this */
 /* use store interfaces */
 
 /* keys are public ips, which should be unique */
-var peerTable = map[string]Peer{}
+var peerTable = map[string]*Peer{}
 
 type ClientWriter struct {
 	addr    net.UDPAddr
@@ -65,8 +64,8 @@ func handleList(public string, conn *ClientWriter) {
 		if i == public {
 			continue
 		}
-		log.Printf("sending %+v\n", peerTable[i].Client)
-		err := conn.WriteSerialized(*peerTable[i].Client)
+		log.Println("sending ", peerTable[i].Client)
+		err := conn.WriteSerialized(peerTable[i].Client)
 		if err != nil {
 			log.Println("Writeclient: ", err)
 			return
@@ -87,7 +86,7 @@ func notifyNewPeer(peer *Peer) error {
 		}
 		// will this call even timeout??
 		log.Println("Notifying ", peerTable[i].Public, " ", peer.Public)
-		err := peerTable[i].Writer.WriteSerialized(*peer.Client)
+		err := peerTable[i].Writer.WriteSerialized(peer.Client)
 		if err != nil {
 			// unlikely to rollback...
 			return err
@@ -95,6 +94,17 @@ func notifyNewPeer(peer *Peer) error {
 	}
 	return nil
 }
+
+type IdGenerator = func() uint
+
+// Note it count from 1
+var idGen = func() IdGenerator {
+	i := uint(0)
+	return func() uint {
+		i += 1
+		return i
+	}
+}()
 
 func handleRegisteration(public string, private string, conn *ClientWriter) {
 
@@ -111,13 +121,11 @@ func handleRegisteration(public string, private string, conn *ClientWriter) {
 
 	log.Println("Adding ", public, " to peer list")
 
-	count := uint(len(peerTable))
-
-	peer := Peer{
+	peer := &Peer{
 		Client: &netutils.Client{
 			Public:  public,
 			Private: private,
-			Id:      count,
+			Id:      idGen(),
 		},
 		Writer: conn,
 	}
@@ -125,15 +133,16 @@ func handleRegisteration(public string, private string, conn *ClientWriter) {
 	// adding semephore
 	handleList(public, conn)
 
-	notifyNewPeer(&peer)
+	notifyNewPeer(peer)
 
 	peerTable[public] = peer
 
-	log.Println("We now have ", count+1, " clients")
+	log.Println("We now have ", len(peerTable), " clients")
 }
 
 func handleExit(public string) {
 	delete(peerTable, public)
+	// TODO implement client interface to remove peer
 }
 
 func main() {
@@ -159,7 +168,13 @@ func main() {
 			continue
 		}
 
-		client := NewClientWriter(udp, public)
+		var client *ClientWriter
+		peer, ok := peerTable[public.String()]
+		if !ok {
+			client = NewClientWriter(udp, public)
+		} else {
+			client = peer.Writer
+		}
 
 		cmds := strings.Split(string(what[:c]), " ")
 		log.Println("msg ", cmds)

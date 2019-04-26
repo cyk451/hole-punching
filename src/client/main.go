@@ -2,6 +2,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/gob"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -34,6 +37,9 @@ func chatShellHandler(p2p *P2PClient) {
 			fmt.Fprintln(os.Stderr, err)
 			continue
 		}
+		if what[0] == '\n' {
+			continue
+		}
 		go p2p.WriteToPeers([]byte(what))
 	}
 }
@@ -44,6 +50,7 @@ type PeerIO struct {
 	io.Reader
 	readPipeWriter io.Writer
 	udp            *net.UDPAddr
+	lastResponse   uint64
 	// reuse Read()
 	// conn           *P2PClient
 }
@@ -52,44 +59,13 @@ func (s *PeerIO) writeToReadPipe(bytes []byte) (int, error) {
 	return s.readPipeWriter.Write(bytes)
 }
 
-// actually read from master
-/*
-func (s HostIO) Read(p []byte) (l int, e error) {
-	l, addr, e := s.conn.ReadFromUDP(p)
-	// debug.PrintStack()
-	source := addr.String()
-	if e != nil || source != HOST {
-		if e == nil {
-			e = errors.New("Expecting data from host... got from " + source)
-		}
-		fmt.Println("Read error ", e)
-		return
-	}
-	// fmt.Println("bytes read: ", p[:l])
-	return
-}
-
-func (hs HostIO) Handle(msg []byte) error {
-	// keep reading peer data
-	var c netutils.Client
-
-	err := gob.NewDecoder(bytes.NewBuffer(msg)).Decode(c)
-	if err != nil {
-		return err
-	}
-
-	peerList = append(peerList, c)
-	return nil
-}
-*/
-
 func (s *PeerIO) Write(p []byte) (c int, err error) {
 	// TODO: try private and public
 	if s.udp == nil {
-		public := s.client.Public
-		s.udp, err = net.ResolveUDPAddr("udp", public)
+		s.udp, err = net.ResolveUDPAddr("udp", s.client.Public)
 		if err != nil {
 			log.Println("udp resolving error ", err)
+			return 0, err
 		}
 	}
 
@@ -101,39 +77,20 @@ func (s *PeerIO) Write(p []byte) (c int, err error) {
 		log.Println("Error writing to peer ", s.udp, ", ", err)
 		return
 	}
-	log.Println(c, " bytes wrote to ", s.udp)
+	// log.Println(c, " bytes wrote to ", s.udp)
 	return
 }
 
-func peerReadHandler(peer *PeerIO) {
-	for {
-		msg := make([]byte, 512)
-		l, err := peer.Read(msg)
-		if err != nil {
-			if err == io.EOF {
-				continue
-			}
-			log.Println("reading client: ", err)
-			break
-		}
-		fmt.Print("\r" + string(msg[:l]) + CURSOR)
-	}
-	log.Println("Read thread for peer", peer.client.Public, " died")
+func writeMessage(what string) {
+	fmt.Print("\r" + what + CURSOR)
 }
 
-func listen(p2p *P2PClient, host *HostIO) {
-	for {
-		var c netutils.Client
-		err := host.ReadSerialized(&c)
-		if err != nil {
-			log.Println("ReadSerialized error: ", err)
-			continue
-		}
-
-		log.Printf("Adding peer %+v\n", c)
-		peer := p2p.AddPeer(&c)
-		go peerReadHandler(peer)
-	}
+// A handler takes source and raw bytes. It returns a int to indicate how much
+// bytes it processed, the rest of the texts are then passed to the next
+// handler in the chain.
+func peerReadHandler(raw []byte) int {
+	writeMessage(string(raw))
+	return len(raw)
 }
 
 func signalExit(host *HostIO) {
@@ -143,19 +100,87 @@ func signalExit(host *HostIO) {
 
 }
 
-func main() {
-	p2p := newP2PClient(HOST)
+/* arguments */
+var (
+	h      bool
+	logfn  string
+	hostip string
+)
 
-	// send a registeration information to host
+func parseArgs() {
+
+	flag.BoolVar(&h, "h", false, "this help")
+	flag.StringVar(&logfn, "l", "STDERR", "a filename to which logs are printed. upon open errors, write to stderr")
+	flag.StringVar(&hostip, "H", HOST, "a ip address of hole punching name server to connect to")
+}
+
+func openLogFile() *os.File {
+	if logfn == "STDERR" {
+		return nil
+	}
+	logf, err := os.OpenFile(logfn, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
+	if err != nil {
+		log.Println("Failed opening log file, logs to stderr: ", err)
+	} else {
+		log.Println("logs redirected to ", logfn)
+		log.SetOutput(logf)
+	}
+	return logf
+}
+
+func main() {
+	parseArgs()
+	flag.Parse()
+	log.Println("h ", h)
+	log.Println("logfn ", logfn)
+	log.Println("hostip ", hostip)
+	if h {
+		flag.Usage()
+		return
+	}
+
+	if logf := openLogFile(); logf != nil {
+		defer logf.Close()
+	}
+
+	p2p := newP2PClient(hostip)
+
 	host, err := p2p.ConnectHost()
 	if err != nil {
 		log.Fatal("Error dial p2p ", err)
 		return
 	}
 
-	go p2p.Listen()
+	p2p.AddSourcedHandler(
+		host.udp.String(),
+		func(raw []byte) (bRead int) {
+			var c netutils.Client
 
-	go listen(p2p, host)
+			rdr := bytes.NewReader(raw)
+			had := rdr.Len()
+			err := gob.NewDecoder(rdr).Decode(&c)
+			if err != nil {
+				log.Println("not accespt: reason ", err)
+				return
+			}
+
+			peer := p2p.AddPeer(&c)
+			p2p.AddSourcedHandler(
+				peer.udp.String(),
+				peerReadHandler,
+			)
+			bRead = had - rdr.Len()
+			return
+		},
+	)
+
+	// send a registeration information to host
+	err = p2p.Register()
+	if err != nil {
+		log.Println("Register error ", err)
+	}
+
+	// go listen(p2p, host)
 
 	fmt.Println("* Client runing on ", p2p.localIP)
 

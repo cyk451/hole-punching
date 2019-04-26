@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/gob"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -11,17 +11,17 @@ import (
 	netutils "github.com/cyk451/hole-punching/src/net-utils"
 )
 
-type p2pHandler interface {
-	Handle(msg []byte) error
-}
+type P2PHandler func(source string, msg []byte) (processed int)
 
+/*
 type p2pIO interface {
-	Read([]byte) (int, error)
+	// Read([]byte) (int, error)
 
 	Write([]byte) (int, error)
 
-	writeToReadPipe([]byte) (int, error)
+	// writeToReadPipe([]byte) (int, error)
 }
+*/
 
 type LockedUDPConn struct {
 	*net.UDPConn
@@ -29,9 +29,9 @@ type LockedUDPConn struct {
 }
 
 type HostIO struct {
-	conn           *LockedUDPConn
-	udp            *net.UDPAddr
-	decoder        *gob.Decoder
+	conn *LockedUDPConn
+	udp  *net.UDPAddr
+	// decoder        *gob.Decoder
 	readPipeWriter io.Writer
 	io.Reader
 	// udp            *net.UDPAddr
@@ -50,7 +50,7 @@ func (s *HostIO) writeToReadPipe(bytes []byte) (int, error) {
 
 func (s *HostIO) ReadSerialized(obj interface{}) (err error) {
 	for retries := 10; retries > 0; retries-- {
-		err = s.decoder.Decode(obj)
+		// err = s.decoder.Decode(obj)
 		// somehow we need to do a couple retries
 		if err == nil {
 			return
@@ -65,8 +65,10 @@ type P2PClient struct {
 	localIP      string
 	peerList     []netutils.Client
 	peerMessages chan []byte
-	ios          map[string]p2pIO
+	ios          map[string]io.Writer
 	self         netutils.Client
+	handlers     []P2PHandler
+	newHandlers  []P2PHandler
 }
 
 func (p2p *P2PClient) WriteToPeers(bytes []byte) (err error) {
@@ -120,77 +122,129 @@ func newP2PClient(host string) *P2PClient {
 	c.hostUDP = hostUDP
 	c.conn = &LockedUDPConn{UDPConn: conn}
 	c.localIP = localIP
-	c.ios = make(map[string]p2pIO)
+	c.ios = make(map[string]io.Writer)
 
 	return c
 }
 
-func (s *P2PClient) ConnectHost() (*HostIO, error) {
-	r, w := io.Pipe()
+func (s *P2PClient) AddSourcedHandler(expecting string, pureHandler func([]byte) int) {
+	s.AddHandler(
+		func(source string, raw []byte) int {
+			if source != expecting {
+				return 0
+			}
+			return pureHandler(raw)
+		},
+	)
+}
 
-	host := &HostIO{
-		decoder:        gob.NewDecoder(r),
-		Reader:         r,
-		readPipeWriter: w,
-		udp:            s.hostUDP,
-		conn:           s.conn,
+func (s *P2PClient) AddHandler(h P2PHandler) {
+	s.newHandlers = append(s.newHandlers, h)
+}
+
+func (s *P2PClient) Register() error {
+	host, ok := s.ios[s.hostUDP.String()]
+	if !ok {
+		return errors.New("Host not connected")
 	}
-	s.ios[s.hostUDP.String()] = host
 
 	what := "register " + s.localIP
 	n, err := host.Write([]byte(what))
 	if err != nil {
 		fmt.Println(err, ", n: ", n)
-		return nil, err
+		// return nil, err
+		return err
 	}
+	return nil
+}
+
+func (s *P2PClient) ConnectHost() (*HostIO, error) {
+	// r, w := io.Pipe()
+
+	host := &HostIO{
+		// decoder: gob.NewDecoder(),
+		// Reader:         r,
+		// readPipeWriter: w,
+		udp:  s.hostUDP,
+		conn: s.conn,
+	}
+	s.ios[s.hostUDP.String()] = host
+
+	go s.listen()
 
 	return host, nil
 }
 
-func (s *P2PClient) handle(msg []byte, source string) {
-	h, found := s.ios[source]
-	if !found {
-		log.Println("msg from ", source, " has no handler: ", msg)
-		return
-	}
+type Msg struct {
+	source *net.UDPAddr
+	raw    []byte
+}
 
-	log.Println("Some messages from ", source, string(msg))
+func (s *P2PClient) handlerThread(ch chan Msg) {
+	for {
+		msg := <-ch
 
-	_, err := h.writeToReadPipe(msg)
-	if err != nil {
-		log.Println("error handling msg from ", source, ": ", err)
+		if len(s.newHandlers) != 0 {
+			s.handlers = append(s.handlers, s.newHandlers...)
+			s.newHandlers = s.newHandlers[:0]
+			// handler to be append
+		}
+		raw := msg.raw
+		src := msg.source.String()
+		for i, handler := range s.handlers {
+			log.Println("handler ", i, ", raw ", string(raw))
+			c := handler(src, raw)
+			raw = raw[c:]
+			if len(raw) == 0 {
+				break
+			}
+		}
+		if len(raw) != 0 {
+			log.Println("Some message from ", src, " was dropped ", string(raw))
+		}
+
 	}
 }
 
-func (s *P2PClient) Listen() {
-	for {
-		msg := make([]byte, 512)
-		n, addr, err := s.conn.ReadFromUDP(msg)
+func (s *P2PClient) listen() {
+	ch := make(chan Msg, 16)
+	go s.handlerThread(ch)
+	for { // listening thread
+		var err error
+		var c int
+
+		msg := Msg{raw: make([]byte, 512)}
+		c, msg.source, err = s.conn.ReadFromUDP(msg.raw)
 		if err != nil {
 			log.Println("read error: ", err)
 			continue
 		}
-
-		go s.handle(msg[:n], addr.String())
+		log.Println("c: ", c)
+		msg.raw = msg.raw[:c]
+		ch <- msg
 	}
 }
 
 func (s *P2PClient) AddPeer(c *netutils.Client) *PeerIO {
 	// TODO lock peerList
-	// i := len(s.peerList)
 	s.peerList = append(s.peerList, *c)
-	r, w := io.Pipe()
 
 	peer := &PeerIO{
-		client:         c,
-		conn:           s.conn,
-		Reader:         r,
-		readPipeWriter: w,
+		client: c,
+		conn:   s.conn,
 	}
 	s.ios[c.Public] = peer
+
+	// TODO sending an ack
+	_, err := peer.Write([]byte("Joined\n"))
+	if err != nil {
+		log.Println("Error writing peer ack ", err)
+	}
+
 	log.Println("Peer added ", c.Public)
 	return peer
 }
 
 func (s P2PClient) Close() {
+	s.conn.Close()
 }
