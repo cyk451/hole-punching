@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+
+package hpclient;
+
+message RawMessage {
+	string msg = 1;
+	google.protobuf.Timestamp time = 2;
+}

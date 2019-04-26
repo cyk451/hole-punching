@@ -9,11 +9,12 @@ import (
 	"net"
 	"strings"
 
-	netutils "github.com/cyk451/hole-punching/src/net-utils"
+	"github.com/cyk451/hole-punching/src/hpclient"
+	"github.com/golang/protobuf/proto"
 )
 
 type Peer struct {
-	*netutils.Client
+	*hpclient.Client
 	Writer *ClientWriter
 }
 
@@ -33,7 +34,6 @@ var _ io.Writer = &ClientWriter{}
 
 func (c *ClientWriter) Write(in []byte) (w int, err error) {
 	log.Println("Writing: ", string(in))
-	// c.buffer = append(c.buffer, in...)
 	return c.buffer.Write(in)
 }
 
@@ -46,9 +46,14 @@ func (c *ClientWriter) Flush() {
 	return
 }
 
-func (c *ClientWriter) WriteSerialized(obj interface{}) error {
+func (c *ClientWriter) WriteSerialized(obj proto.Message) error {
 	defer c.Flush()
-	return c.encoder.Encode(obj)
+	out, err := proto.Marshal(obj)
+	if err != nil {
+		return err
+	}
+	c.buffer.Write(out)
+	return nil
 }
 
 func NewClientWriter(conn *net.UDPConn, addr *net.UDPAddr) *ClientWriter {
@@ -64,8 +69,10 @@ func handleList(public string, conn *ClientWriter) {
 		if i == public {
 			continue
 		}
-		log.Println("sending ", peerTable[i].Client)
-		err := conn.WriteSerialized(peerTable[i].Client)
+
+		p := peerTable[i]
+		log.Println("sending ", p.Client)
+		err := conn.WriteSerialized(p.Client)
 		if err != nil {
 			log.Println("Writeclient: ", err)
 			return
@@ -95,12 +102,12 @@ func notifyNewPeer(peer *Peer) error {
 	return nil
 }
 
-type IdGenerator = func() uint
+type IdGenerator = func() uint32
 
 // Note it count from 1
 var idGen = func() IdGenerator {
-	i := uint(0)
-	return func() uint {
+	i := uint32(0)
+	return func() uint32 {
 		i += 1
 		return i
 	}
@@ -122,7 +129,7 @@ func handleRegisteration(public string, private string, conn *ClientWriter) {
 	log.Println("Adding ", public, " to peer list")
 
 	peer := &Peer{
-		Client: &netutils.Client{
+		Client: &hpclient.Client{
 			Public:  public,
 			Private: private,
 			Id:      idGen(),

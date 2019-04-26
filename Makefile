@@ -11,3 +11,6 @@ $(OUT):
 
 $(OUT)/%: $(SRC)/%/*.go
 	CGO_ENABLED=0 go build -o $@ $(SRC)/$(notdir $@)
+
+clean:
+	-rm $(BINARIES)

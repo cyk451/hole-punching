@@ -2,16 +2,16 @@ package main
 
 import (
 	"bufio"
-	"bytes"
-	"encoding/gob"
 	"flag"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"os"
+	"time"
 
-	netutils "github.com/cyk451/hole-punching/src/net-utils"
+	"github.com/cyk451/hole-punching/src/hpclient"
+	protobuf "github.com/gogo/protobuf/types"
+	"github.com/golang/protobuf/proto"
 )
 
 const HOST_PORT = "11711"
@@ -21,9 +21,19 @@ const HOST_PORT = "11711"
 const HOST = "104.155.225.82:" + HOST_PORT
 const CURSOR = "$ "
 
-func chatShellHandler(p2p *P2PClient) {
-	// var err error
+func asMessage(w string) *hpclient.RawMessage {
+	now := time.Now()
+	return &hpclient.RawMessage{
+		Msg: w,
+		Time: &protobuf.Timestamp{
+			Seconds: now.Unix(),
+			Nanos:   int32(now.UnixNano()),
+		},
+	}
 
+}
+
+func chatShellHandler(p2p *P2PClient) {
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
@@ -40,56 +50,29 @@ func chatShellHandler(p2p *P2PClient) {
 		if what[0] == '\n' {
 			continue
 		}
-		go p2p.WriteToPeers([]byte(what))
+		go p2p.WriteToPeers(asMessage(string(what)))
 	}
 }
 
-type PeerIO struct {
-	client *netutils.Client
-	conn   *LockedUDPConn
-	io.Reader
-	readPipeWriter io.Writer
-	udp            *net.UDPAddr
-	lastResponse   uint64
-	// reuse Read()
-	// conn           *P2PClient
-}
-
-func (s *PeerIO) writeToReadPipe(bytes []byte) (int, error) {
-	return s.readPipeWriter.Write(bytes)
-}
-
-func (s *PeerIO) Write(p []byte) (c int, err error) {
-	// TODO: try private and public
-	if s.udp == nil {
-		s.udp, err = net.ResolveUDPAddr("udp", s.client.Public)
-		if err != nil {
-			log.Println("udp resolving error ", err)
-			return 0, err
-		}
-	}
-
-	s.conn.mutex.Lock()
-	c, err = s.conn.WriteToUDP(p, s.udp)
-	s.conn.mutex.Unlock()
-
-	if err != nil {
-		log.Println("Error writing to peer ", s.udp, ", ", err)
-		return
-	}
-	// log.Println(c, " bytes wrote to ", s.udp)
-	return
-}
-
-func writeMessage(what string) {
-	fmt.Print("\r" + what + CURSOR)
+func printMsg(msg *hpclient.RawMessage) {
+	fmt.Print("\r" +
+		time.Unix(msg.Time.Seconds, int64(msg.Time.Nanos)).Format("03:04:05") +
+		": " + msg.Msg + CURSOR)
 }
 
 // A handler takes source and raw bytes. It returns a int to indicate how much
 // bytes it processed, the rest of the texts are then passed to the next
 // handler in the chain.
 func peerReadHandler(raw []byte) int {
-	writeMessage(string(raw))
+
+	msg := &hpclient.RawMessage{}
+	err := proto.Unmarshal(raw, msg)
+	if err != nil {
+		log.Println("not accespt: reason ", err)
+		return 0
+	}
+	printMsg(msg)
+
 	return len(raw)
 }
 
@@ -111,7 +94,9 @@ func parseArgs() {
 
 	flag.BoolVar(&h, "h", false, "this help")
 	flag.StringVar(&logfn, "l", "STDERR", "a filename to which logs are printed. upon open errors, write to stderr")
-	flag.StringVar(&hostip, "H", HOST, "a ip address of hole punching name server to connect to")
+	flag.StringVar(&hostip, "H", HOST, "an ip address on which a hole punching name server is running")
+
+	flag.Parse()
 }
 
 func openLogFile() *os.File {
@@ -130,10 +115,7 @@ func openLogFile() *os.File {
 
 func main() {
 	parseArgs()
-	flag.Parse()
-	log.Println("h ", h)
-	log.Println("logfn ", logfn)
-	log.Println("hostip ", hostip)
+
 	if h {
 		flag.Usage()
 		return
@@ -143,33 +125,38 @@ func main() {
 		defer logf.Close()
 	}
 
-	p2p := newP2PClient(hostip)
+	p2p := &P2PClient{}
 
-	host, err := p2p.ConnectHost()
+	host, err := p2p.ConnectHost(hostip)
 	if err != nil {
 		log.Fatal("Error dial p2p ", err)
 		return
 	}
+	defer signalExit(host)
 
 	p2p.AddSourcedHandler(
 		host.udp.String(),
 		func(raw []byte) (bRead int) {
-			var c netutils.Client
+			c := &hpclient.Client{}
 
-			rdr := bytes.NewReader(raw)
-			had := rdr.Len()
-			err := gob.NewDecoder(rdr).Decode(&c)
+			err := proto.Unmarshal(raw, c)
 			if err != nil {
 				log.Println("not accespt: reason ", err)
 				return
 			}
 
-			peer := p2p.AddPeer(&c)
+			peer := p2p.AddPeer(c)
 			p2p.AddSourcedHandler(
-				peer.udp.String(),
+				peer.client.Public,
 				peerReadHandler,
 			)
-			bRead = had - rdr.Len()
+
+			err = peer.WriteSerialized(asMessage("Joined\n"))
+			if err != nil {
+				log.Println("Error writing peer ack ", err)
+			}
+
+			bRead = len(raw)
 			return
 		},
 	)
@@ -180,11 +167,7 @@ func main() {
 		log.Println("Register error ", err)
 	}
 
-	// go listen(p2p, host)
-
-	fmt.Println("* Client runing on ", p2p.localIP)
+	fmt.Println("* Local IP: ", p2p.localIP)
 
 	chatShellHandler(p2p)
-
-	signalExit(host)
 }
