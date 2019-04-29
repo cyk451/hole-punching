@@ -5,11 +5,10 @@ package hpclient
 
 import (
 	fmt "fmt"
+	proto "github.com/gogo/protobuf/proto"
+	types "github.com/gogo/protobuf/types"
 	io "io"
 	math "math"
-
-	protobuf "github.com/gogo/protobuf/types"
-	proto "github.com/golang/protobuf/proto"
 )
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -21,14 +20,11 @@ var _ = math.Inf
 // is compatible with the proto package it is being compiled against.
 // A compilation error at this line likely means your copy of the
 // proto package needs to be updated.
-const _ = proto.ProtoPackageIsVersion2 // please upgrade the proto package
+const _ = proto.GoGoProtoPackageIsVersion2 // please upgrade the proto package
 
 type RawMessage struct {
-	Msg                  string              `protobuf:"bytes,1,opt,name=msg,proto3" json:"msg,omitempty"`
-	Time                 *protobuf.Timestamp `protobuf:"bytes,2,opt,name=time,proto3" json:"time,omitempty"`
-	XXX_NoUnkeyedLiteral struct{}            `json:"-"`
-	XXX_unrecognized     []byte              `json:"-"`
-	XXX_sizecache        int32               `json:"-"`
+	Msg  string           `protobuf:"bytes,1,opt,name=msg,proto3" json:"msg,omitempty"`
+	Time *types.Timestamp `protobuf:"bytes,2,opt,name=time,proto3" json:"time,omitempty"`
 }
 
 func (m *RawMessage) Reset()         { *m = RawMessage{} }
@@ -71,7 +67,7 @@ func (m *RawMessage) GetMsg() string {
 	return ""
 }
 
-func (m *RawMessage) GetTime() *protobuf.Timestamp {
+func (m *RawMessage) GetTime() *types.Timestamp {
 	if m != nil {
 		return m.Time
 	}
@@ -85,7 +81,7 @@ func init() {
 func init() { proto.RegisterFile("message.proto", fileDescriptor_33c57e4bae7b9afd) }
 
 var fileDescriptor_33c57e4bae7b9afd = []byte{
-	// 152 bytes of a gzipped FileDescriptorProto
+	// 161 bytes of a gzipped FileDescriptorProto
 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0xe2, 0xcd, 0x4d, 0x2d, 0x2e,
 	0x4e, 0x4c, 0x4f, 0xd5, 0x2b, 0x28, 0xca, 0x2f, 0xc9, 0x17, 0xe2, 0xc8, 0x28, 0x48, 0xce, 0xc9,
 	0x4c, 0xcd, 0x2b, 0x91, 0x92, 0x4f, 0xcf, 0xcf, 0x4f, 0xcf, 0x49, 0xd5, 0x07, 0x8b, 0x27, 0x95,
@@ -93,9 +89,10 @@ var fileDescriptor_33c57e4bae7b9afd = []byte{
 	0x71, 0x05, 0x25, 0x96, 0xfb, 0x42, 0xb4, 0x0b, 0x09, 0x70, 0x31, 0xe7, 0x16, 0xa7, 0x4b, 0x30,
 	0x2a, 0x30, 0x6a, 0x70, 0x06, 0x81, 0x98, 0x42, 0x7a, 0x5c, 0x2c, 0x20, 0x2d, 0x12, 0x4c, 0x0a,
 	0x8c, 0x1a, 0xdc, 0x46, 0x52, 0x7a, 0x10, 0xf3, 0xf4, 0x60, 0xe6, 0xe9, 0x85, 0xc0, 0xcc, 0x0b,
-	0x02, 0xab, 0x73, 0x12, 0x38, 0xf1, 0x48, 0x8e, 0xf1, 0xc2, 0x23, 0x39, 0xc6, 0x07, 0x8f, 0xe4,
-	0x18, 0x67, 0x3c, 0x96, 0x63, 0x48, 0x62, 0x03, 0xab, 0x35, 0x06, 0x04, 0x00, 0x00, 0xff, 0xff,
-	0x66, 0xb9, 0xe0, 0x8b, 0xa4, 0x00, 0x00, 0x00,
+	0x02, 0xab, 0x73, 0x92, 0x38, 0xf1, 0x48, 0x8e, 0xf1, 0xc2, 0x23, 0x39, 0xc6, 0x07, 0x8f, 0xe4,
+	0x18, 0x27, 0x3c, 0x96, 0x63, 0xb8, 0xf0, 0x58, 0x8e, 0xe1, 0xc6, 0x63, 0x39, 0x86, 0x24, 0x36,
+	0xb0, 0x1e, 0x63, 0x40, 0x00, 0x00, 0x00, 0xff, 0xff, 0xb5, 0x7f, 0xd9, 0x85, 0xac, 0x00, 0x00,
+	0x00,
 }
 
 func (m *RawMessage) Marshal() (dAtA []byte, err error) {
@@ -129,9 +126,6 @@ func (m *RawMessage) MarshalTo(dAtA []byte) (int, error) {
 		}
 		i += n1
 	}
-	if m.XXX_unrecognized != nil {
-		i += copy(dAtA[i:], m.XXX_unrecognized)
-	}
 	return i, nil
 }
 
@@ -157,9 +151,6 @@ func (m *RawMessage) Size() (n int) {
 	if m.Time != nil {
 		l = m.Time.Size()
 		n += 1 + l + sovMessage(uint64(l))
-	}
-	if m.XXX_unrecognized != nil {
-		n += len(m.XXX_unrecognized)
 	}
 	return n
 }
@@ -268,7 +259,7 @@ func (m *RawMessage) Unmarshal(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			if m.Time == nil {
-				m.Time = &protobuf.Timestamp{}
+				m.Time = &types.Timestamp{}
 			}
 			if err := m.Time.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
@@ -289,7 +280,6 @@ func (m *RawMessage) Unmarshal(dAtA []byte) error {
 			if (iNdEx + skippy) > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.XXX_unrecognized = append(m.XXX_unrecognized, dAtA[iNdEx:iNdEx+skippy]...)
 			iNdEx += skippy
 		}
 	}

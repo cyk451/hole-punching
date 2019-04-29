@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/cyk451/hole-punching/src/hpclient"
-	protobuf "github.com/gogo/protobuf/types"
+	types "github.com/gogo/protobuf/types"
 	"github.com/golang/protobuf/proto"
 )
 
@@ -19,13 +19,13 @@ const HOST_PORT = "11711"
 // const HOST = "10.128.113.10:" + HOST_PORT
 
 const HOST = "104.155.225.82:" + HOST_PORT
-const CURSOR = "$ "
+const CURSOR = "< "
 
 func asMessage(w string) *hpclient.RawMessage {
 	now := time.Now()
 	return &hpclient.RawMessage{
 		Msg: w,
-		Time: &protobuf.Timestamp{
+		Time: &types.Timestamp{
 			Seconds: now.Unix(),
 			Nanos:   int32(now.UnixNano()),
 		},
@@ -57,7 +57,7 @@ func chatShellHandler(p2p *P2PClient) {
 func printMsg(msg *hpclient.RawMessage) {
 	fmt.Print("\r" +
 		time.Unix(msg.Time.Seconds, int64(msg.Time.Nanos)).Format("03:04:05") +
-		": " + msg.Msg + CURSOR)
+		"> " + msg.Msg + CURSOR)
 }
 
 // A handler takes source and raw bytes. It returns a int to indicate how much
@@ -68,7 +68,7 @@ func peerReadHandler(raw []byte) int {
 	msg := &hpclient.RawMessage{}
 	err := proto.Unmarshal(raw, msg)
 	if err != nil {
-		log.Println("not accespt: reason ", err)
+		log.Println("parse failed: ", err)
 		return 0
 	}
 	printMsg(msg)
@@ -85,9 +85,10 @@ func signalExit(host *HostIO) {
 
 /* arguments */
 var (
-	h      bool
-	logfn  string
-	hostip string
+	h        bool
+	logfn    string
+	hostip   string
+	nickname string
 )
 
 func parseArgs() {
@@ -95,6 +96,7 @@ func parseArgs() {
 	flag.BoolVar(&h, "h", false, "this help")
 	flag.StringVar(&logfn, "l", "STDERR", "a filename to which logs are printed. upon open errors, write to stderr")
 	flag.StringVar(&hostip, "H", HOST, "an ip address on which a hole punching name server is running")
+	flag.StringVar(&nickname, "n", "anonymous", "a name to be showed in chatting")
 
 	flag.Parse()
 }

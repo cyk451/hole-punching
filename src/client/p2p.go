@@ -224,7 +224,7 @@ func (s *P2PClient) Listen(listenIP string) error {
 	s.localIP = listenIP
 	s.Status = Running
 
-	go s.listen()
+	go s.listenThread()
 	return nil
 
 }
@@ -263,7 +263,7 @@ func (s *P2PClient) handlerThread(ch chan messageSet) {
 	}
 }
 
-func (s *P2PClient) listen() {
+func (s *P2PClient) listenThread() {
 	ch := make(chan messageSet, 16)
 	go s.handlerThread(ch)
 

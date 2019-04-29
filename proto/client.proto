@@ -7,4 +7,5 @@ message Client {
 	string private = 2;
 	uint32 id = 3;
 	string nickname = 4;
+
 }
