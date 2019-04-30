@@ -1,25 +1,25 @@
-OUT := ./bin
-SRC := ./src
-BINARIES := $(addprefix $(OUT)/, client server)
+OUT_DIR := ./bin
+SRC_DIR := ./src
+BINARIES := $(addprefix $(OUT_DIR)/, client server)
 
-PROTO_SRC := client message
-PROTO_SRC_LOC := ./proto
-PROTO_TARGET_LOC := ./src/hpclient
-PROTOS := $(addsuffix .proto, $(addprefix $(PROTO_SRC_LOC)/, $(PROTO_SRC)))
-PROTO_TARGETS := $(addsuffix .pb.go, $(addprefix $(PROTO_TARGET_LOC)/, $(PROTO_SRC)))
 # $(info PROTOS_TARGETS $(PROTO_TARGETS))
 
 all: $(BINARIES)
 
-$(BINARIES): | $(OUT)
+$(BINARIES): | $(OUT_DIR)
 
-$(OUT):
-	-mkdir $(OUT)
+$(OUT_DIR):
+	-mkdir $(OUT_DIR)
 
-$(OUT)/%: $(SRC)/%/*.go
-	CGO_ENABLED=0 go build -o $@ $(SRC)/$(notdir $@)
+$(OUT_DIR)/%: $(SRC_DIR)/%/*.go
+	CGO_ENABLED=0 go build -o $@ $(SRC_DIR)/$(notdir $@)
 
 
+PROTO_SRC := client message command
+PROTO_SRC_LOC := ./proto
+PROTO_TARGET_LOC := ./src/proto_models
+PROTOS := $(addsuffix .proto, $(addprefix $(PROTO_SRC_LOC)/, $(PROTO_SRC)))
+PROTO_TARGETS := $(addsuffix .pb.go, $(addprefix $(PROTO_TARGET_LOC)/, $(PROTO_SRC)))
 # rebuild protos require installation of gogo-protobuf
 protos: $(PROTO_TARGETS)
 

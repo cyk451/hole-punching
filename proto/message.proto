@@ -2,9 +2,10 @@ syntax = "proto3";
 
 import "google/protobuf/timestamp.proto";
 
-package hpclient;
+package proto_models;
 
 message RawMessage {
 	string msg = 1;
 	google.protobuf.Timestamp time = 2;
+	string who = 3;
 }

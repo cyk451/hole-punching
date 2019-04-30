@@ -1,11 +1,11 @@
 syntax = "proto3";
 
-package hpclient;
+package proto_models;
 
 message Client {
 	string public = 1;
 	string private = 2;
-	uint32 id = 3;
+	uint32 id = 3; // this field has no use so far
 	string nickname = 4;
 
 }
