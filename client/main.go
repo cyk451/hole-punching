@@ -9,8 +9,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/cyk451/hole-punching/src/p2p"
-	"github.com/cyk451/hole-punching/src/proto_models"
+	"github.com/cyk451/hole-punching/p2p"
+	"github.com/cyk451/hole-punching/proto_models"
 	types "github.com/gogo/protobuf/types"
 	"github.com/golang/protobuf/proto"
 )
@@ -27,7 +27,7 @@ var (
 )
 
 type Client struct {
-	proto_models.Client
+	p2p.Client
 	Active string
 }
 
@@ -95,13 +95,13 @@ func chatShellThread(conn *p2p.Conn) {
 
 func printMsg(msg *proto_models.RawMessage) {
 	fmt.Print("\r" +
-		time.Unix(msg.Time.Seconds, int64(msg.Time.Nanos)).Format("03:04:05") +
+		time.Unix(msg.Time.Seconds, int64(msg.Time.Nanos)).Format("15:04:05") +
 		"|" + msg.Who + "> " + msg.Msg + CURSOR)
 }
 
 func printLocalMsg(msg *proto_models.RawMessage) {
 	fmt.Print("\033[A\r" +
-		time.Unix(msg.Time.Seconds, int64(msg.Time.Nanos)).Format("03:04:05") +
+		time.Unix(msg.Time.Seconds, int64(msg.Time.Nanos)).Format("15:04:05") +
 		"|" + nickname + "< " + msg.Msg)
 }
 

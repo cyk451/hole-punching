@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cyk451/hole-punching/src/proto_models"
+	"github.com/cyk451/hole-punching/proto_models"
 	"github.com/golang/protobuf/proto"
 )
 
@@ -15,7 +15,16 @@ import (
   The connection is considered timeout if the target doesn't respond to a
   handshake in this time.
 */
-const PeerAckTimeoutSec = 5
+const PeerAckTimeoutSec = 1
+
+const AckString = "Ackme"
+
+type Client = proto_models.Client
+
+/*
+  This is a token asking others to reply.
+*/
+var AckBytes = []byte(AckString)
 
 /*
   The maximum bytes can be read in one read operation.
@@ -66,6 +75,7 @@ type Conn struct {
 
 	*LockedUDPConn
 	hostUDP     *net.UDPAddr // could be nil
+	mapLock     sync.Mutex
 	ios         map[string]Writer
 	handlers    []Handler
 	newHandlers []Handler
@@ -80,8 +90,6 @@ func NewConn() *Conn {
 		Status: Stopped,
 		ios:    make(map[string]Writer),
 	}
-	// This was a common global handler
-	c.AddHandler(ackHandlerBindP2PConn(c))
 	return c
 }
 
@@ -89,8 +97,10 @@ func NewConn() *Conn {
  This broadcast serialized object to every connected peer. Note it won't check
  any ack at all.
 */
-func (p2p *Conn) WriteToPeers(obj proto.Message) (err error) {
-	for _, t := range p2p.ios {
+func (s *Conn) WriteToPeers(obj proto.Message) (err error) {
+
+	s.mapLock.Lock()
+	for _, t := range s.ios {
 		_, ok := t.(*PeerIO)
 		if !ok {
 			continue
@@ -100,6 +110,7 @@ func (p2p *Conn) WriteToPeers(obj proto.Message) (err error) {
 			err = e
 		}
 	}
+	s.mapLock.Unlock()
 	return err
 }
 
@@ -129,7 +140,9 @@ func (s *Conn) Register() error {
 	if s.hostUDP == nil {
 		return errors.New("This connection doesn't have a host")
 	}
+	s.mapLock.Lock()
 	host, ok := s.ios[s.hostUDP.String()]
+	s.mapLock.Unlock()
 	if !ok {
 		return errors.New("Host not connected")
 	}
@@ -174,7 +187,9 @@ func (s *Conn) ConnectHost(hostip string) (*HostIO, error) {
 	s.ListenAsync(LocalIP)
 
 	host := &HostIO{NewIOFromIP(s, hostip)}
+	s.mapLock.Lock()
 	s.ios[hostip] = host
+	s.mapLock.Unlock()
 
 	return host, nil
 }
@@ -221,6 +236,9 @@ func (s *Conn) prepareListen(ip string) (err error) {
 	s.LockedUDPConn = &LockedUDPConn{UDPConn: conn}
 	s.LocalIP = ip
 	s.Status = Running
+
+	// This was a common global handler
+	s.AddHandler(ackHandlerBindP2PConn(s))
 	return
 }
 
@@ -253,7 +271,10 @@ func (s *Conn) handlerThread(ch chan messageSet) {
 		raw := msg.raw
 		src := msg.source.String()
 
+		log.Println("src: ", src, ", raw: '", string(raw), "'")
+		s.mapLock.Lock()
 		io, ok := s.ios[src]
+		s.mapLock.Unlock()
 		if ok {
 			io.updateReader()
 
@@ -305,7 +326,9 @@ func (s *Conn) listenThread() {
 
 /* if nil is returned, either this ip not exist, or it's not a peer */
 func (s *Conn) GetPeerByIP(ip string) *PeerIO {
+	s.mapLock.Lock()
 	r, ok := s.ios[ip]
+	s.mapLock.Unlock()
 	if ok {
 		p, ok := r.(*PeerIO)
 		if ok {
@@ -315,7 +338,7 @@ func (s *Conn) GetPeerByIP(ip string) *PeerIO {
 	return nil
 }
 
-func (s *Conn) GetPeer(c *proto_models.Client) *PeerIO {
+func (s *Conn) GetPeer(c *Client) *PeerIO {
 	p := s.GetPeerByIP(c.Public)
 	if p != nil {
 		return p
@@ -329,7 +352,7 @@ func (s *Conn) GetPeer(c *proto_models.Client) *PeerIO {
 	return nil
 }
 
-func (s *Conn) AddPeer(c *proto_models.Client) *PeerIO {
+func (s *Conn) AddPeer(c *Client) *PeerIO {
 
 	if p := s.GetPeer(c); p != nil {
 		return p
@@ -343,32 +366,48 @@ func (s *Conn) AddPeer(c *proto_models.Client) *PeerIO {
 		publicPeer  *PeerIO
 	)
 	publicPeer = &PeerIO{NewIOFromIP(s, c.Public), c}
+	s.mapLock.Lock()
 	s.ios[c.Public] = publicPeer
+	s.mapLock.Unlock()
 	udpHandShakeSync(publicPeer, faster)
 
 	if c.Private != "" {
 		privatePeer = &PeerIO{NewIOFromIP(s, c.Private), c}
+		s.mapLock.Lock()
 		s.ios[c.Private] = privatePeer
+		s.mapLock.Unlock()
 		udpHandShakeSync(privatePeer, faster)
 	}
 
-	t := time.NewTimer(PeerAckTimeoutSec * time.Second)
-	var winner string
-	select {
-	case winner = <-faster:
-		if winner == c.Public {
-			peer = publicPeer
-			// TODO operate with a lock
-			delete(s.ios, c.Private)
-		} else {
-			peer = privatePeer
-			delete(s.ios, c.Public)
-		}
+	retries := 5
+	for retries >= 0 {
+		t := time.NewTimer(PeerAckTimeoutSec * time.Second)
+		var winner string
+		select {
+		case winner = <-faster:
+			if winner == c.Public {
+				peer = publicPeer
+				s.mapLock.Lock()
+				delete(s.ios, c.Private)
+				s.mapLock.Unlock()
+			} else {
+				peer = privatePeer
+				s.mapLock.Lock()
+				delete(s.ios, c.Public)
+				s.mapLock.Unlock()
+			}
 
-		return peer
-	case <-t.C:
-		return nil
+			return peer
+		case <-t.C:
+			log.Println("Retry ack ", c)
+			publicPeer.Write(AckBytes)
+			if privatePeer != nil {
+				privatePeer.Write(AckBytes)
+			}
+			retries -= 1
+		}
 	}
+	return nil
 
 }
 
@@ -377,11 +416,31 @@ func (s Conn) Close() {
 	s.Status = Stopped
 }
 
+/*
+func (s conn)markClientAlive(ip string) {
+	for i := range s.Clients {
+	}
+}
+*/
+
 func ackHandlerBindP2PConn(c *Conn) Handler {
-	return func(source string, msg []byte) int {
-		if string(msg) == "Ackme" {
-			writeToIP(c.LockedUDPConn, source,
-				[]byte("Received"))
+	return func(src string, msg []byte) int {
+		if string(msg) == AckString {
+			// markClientAlive(src)
+			udp, err := net.ResolveUDPAddr("udp", src)
+			if err != nil {
+				// return 0, err
+				return 0
+			}
+
+			log.Println(c.LockedUDPConn)
+			c.LockedUDPConn.mutex.Lock()
+			defer c.LockedUDPConn.mutex.Unlock()
+			_, err = c.LockedUDPConn.WriteToUDP([]byte("Received"), udp)
+			if err != nil {
+				log.Println("udp write: ", err)
+			}
+			log.Println("src: ", src, ", acked")
 			return len(msg)
 		}
 		return 0
@@ -389,22 +448,18 @@ func ackHandlerBindP2PConn(c *Conn) Handler {
 }
 
 func udpHandShakeSync(w Writer, readBack chan<- string) {
-	w.SetReader(func(source string, msg []byte) int {
+	w.SetReader(func(src string, msg []byte) int {
 		if string(msg) == "Received" {
-			readBack <- source
+			// markClientAlive(src)
+			log.Println("src: ", src, ", Received")
+			readBack <- src
 			return len(msg)
 		}
 		return 0
 	})
-	w.Write([]byte("Ackme"))
+	w.Write(AckBytes)
 }
 
 func writeToIP(conn *LockedUDPConn, ip string, p []byte) (int, error) {
-	udp, err := net.ResolveUDPAddr("udp", ip)
-	if err != nil {
-		return 0, err
-	}
-	conn.mutex.Lock()
-	defer conn.mutex.Unlock()
-	return conn.WriteToUDP(p, udp)
+	return 0, nil
 }

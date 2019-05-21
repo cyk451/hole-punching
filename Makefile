@@ -1,5 +1,4 @@
 OUT_DIR := ./bin
-SRC_DIR := ./src
 BINARIES := $(addprefix $(OUT_DIR)/, client server)
 
 # $(info PROTOS_TARGETS $(PROTO_TARGETS))
@@ -11,13 +10,13 @@ $(BINARIES): | $(OUT_DIR)
 $(OUT_DIR):
 	-mkdir $(OUT_DIR)
 
-$(OUT_DIR)/%: $(SRC_DIR)/%/*.go
-	CGO_ENABLED=0 go build -o $@ $(SRC_DIR)/$(notdir $@)
+$(OUT_DIR)/%: %/*.go
+	CGO_ENABLED=0 go build -o $@ ./$(notdir $@)
 
 
 PROTO_SRC := client message command
 PROTO_SRC_LOC := ./proto
-PROTO_TARGET_LOC := ./src/proto_models
+PROTO_TARGET_LOC := ./proto_models
 PROTOS := $(addsuffix .proto, $(addprefix $(PROTO_SRC_LOC)/, $(PROTO_SRC)))
 PROTO_TARGETS := $(addsuffix .pb.go, $(addprefix $(PROTO_TARGET_LOC)/, $(PROTO_SRC)))
 # rebuild protos require installation of gogo-protobuf

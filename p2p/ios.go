@@ -1,9 +1,10 @@
 package p2p
 
 import (
+	"log"
 	"net"
 
-	"github.com/cyk451/hole-punching/src/proto_models"
+	"github.com/cyk451/hole-punching/proto_models"
 	"github.com/golang/protobuf/proto"
 )
 
@@ -19,6 +20,7 @@ type IOBase struct {
 func NewIOFromIP(s *Conn, ip string) *IOBase {
 	udp, err := net.ResolveUDPAddr("udp", ip)
 	if err != nil {
+		log.Println("resolve error ", ip)
 		return nil
 	}
 	return &IOBase{

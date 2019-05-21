@@ -6,11 +6,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cyk451/hole-punching/src/p2p"
-	"github.com/cyk451/hole-punching/src/proto_models"
+	"github.com/cyk451/hole-punching/p2p"
 )
 
-type Client = proto_models.Client
+type Client = p2p.Client
 type IdGenerator = func() uint32
 type Peer = p2p.PeerIO
 
